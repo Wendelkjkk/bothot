@@ -32,15 +32,15 @@ class Bot {
     this.commandHandler = new CommandHandler();
     this.sock = null;
     this.GRUPO_REVELAR = '120363411284666387@g.us';
+    this.isConnected = false;
+    this.syncComplete = false;
+    this.mensagemInicializacaoEnviada = false;
     
     // ⬇️ SEUS GRUPOS PERMITIDOS ⬇️
     this.GRUPOS_PERMITIDOS = [
       '120363411284666387@g.us',
       '120363429725112824@g.us'
     ];
-    
-    // ⬇️ SEU LID (DONO) ⬇️
-    this.DONO_LID = '128862356770988@lid';
   }
 
   async start() {
@@ -69,29 +69,26 @@ class Bot {
       },
       msgRetryCounterCache: new NodeCache(),
       markOnlineOnConnect: true,
-      syncFullHistory: false,
-      shouldSyncHistoryMessage: () => false,
-      patchMessageBeforeSending: (message) => message,
-      defaultQueryTimeoutMs: 3000,
-      generateHighQualityLinkPreview: false,
-      linkPreviewImageThumbnailWidth: 0,
-      receivePresenceUpdates: false,
-      fireInitQueries: false,
-      syncStatus: false,
-      syncStatusV2: false,
-      syncContacts: false,
-      syncChats: false,
-      shouldIgnoreJid: () => false,
-      shouldIgnoreQuery: () => false,
-      qrMaxRetries: 3,
+      syncFullHistory: true,
       connectTimeoutMs: 60000,
       keepAliveIntervalMs: 10000,
-      emitOwnEvents: false
+      qrMaxRetries: 5
     });
 
     this.sock.ev.on('creds.update', saveCreds);
     this.sock.ev.on('connection.update', (update) => this.handleConnection(update));
     this.sock.ev.on('messages.upsert', (m) => this.handleMessages(m));
+    
+    this.sock.ev.on('messaging-history.set', (history) => {
+      if (!this.syncComplete) {
+        this.syncComplete = true;
+        this.logger.system('✅ Histórico carregado!');
+        
+        setTimeout(() => {
+          this.enviarMensagemInicializacao();
+        }, 2000);
+      }
+    });
   }
 
   handleConnection(update) {
@@ -107,54 +104,75 @@ class Bot {
 
     if (connection === 'close') {
       const shouldReconnect = (new Boom(lastDisconnect?.error)?.output?.statusCode) !== DisconnectReason.loggedOut;
+      this.isConnected = false;
+      this.syncComplete = false;
+      this.mensagemInicializacaoEnviada = false;
+      
       if (shouldReconnect) {
         this.logger.warning('Reconectando...');
-        setTimeout(() => this.connect(), 3000);
+        setTimeout(() => {
+          this.logger.system('Tentando reconectar...');
+          this.connect();
+        }, 5000);
       } else {
-        this.logger.error('Conexão encerrada');
+        this.logger.error('Conexão encerrada permanentemente.');
+        setTimeout(() => {
+          process.exit(1);
+        }, 3000);
       }
     } else if (connection === 'open') {
+      this.isConnected = true;
+      this.syncComplete = false;
+      this.mensagemInicializacaoEnviada = false;
+      
       console.clear();
       cfonts.say(this.settings.botName, { font: 'block', align: 'center', gradient: ['green', 'blue'] });
       console.log(chalk.greenBright('\n✅ Bot conectado!'));
       console.log(chalk.cyan('Prefixos: ') + chalk.white(this.settings.prefix.join(' ')));
-      console.log(chalk.gray(`📌 Seu LID: ${this.DONO_LID}`));
       console.log(chalk.gray(`📌 Grupos permitidos:`));
       this.GRUPOS_PERMITIDOS.forEach(grupo => {
         console.log(chalk.gray(`   📌 ${grupo}`));
       });
-      console.log(chalk.gray('💡 Use !jid para ver o JID\n'));
-      this.logger.success('Bot conectado!');
+      console.log(chalk.gray('📥 Carregando histórico... Aguarde!\n'));
+      this.logger.success('Bot conectado! Carregando histórico...');
       
-      setTimeout(() => this.enviarMensagemInicializacao(), 5000);
+      setTimeout(() => {
+        if (!this.syncComplete && !this.mensagemInicializacaoEnviada) {
+          this.logger.warning('⏳ Timeout: Forçando envio');
+          this.syncComplete = true;
+          this.enviarMensagemInicializacao();
+        }
+      }, 30000);
     }
   }
 
   async enviarMensagemInicializacao() {
     try {
+      if (this.mensagemInicializacaoEnviada) return;
+      
       const grupoRevelar = this.GRUPO_REVELAR;
       
       try {
         await this.sock.groupMetadata(grupoRevelar);
       } catch (e) {
-        this.logger.warning(`Grupo ${grupoRevelar} não encontrado ou bot não está no grupo`);
+        this.logger.warning(`Grupo ${grupoRevelar} não encontrado`);
         return;
       }
       
+      this.mensagemInicializacaoEnviada = true;
+      
       const agora = moment().tz(this.settings.timezone);
       const mensagem = `
-🚀 *BOT INICIADO COM SUCESSO!*
+🚀 *BOT INICIADO!*
 
-📱 *Status:* Online e pronto para comandos
-🕐 *Hora:* ${agora.format('DD/MM/YYYY HH:mm:ss')}
-
-✅ Bot aguardando comandos!`;
+🕐 ${agora.format('DD/MM/YYYY HH:mm:ss')}
+✅ Aguardando comandos!`;
       
       await this.sock.sendMessage(grupoRevelar, { text: mensagem });
-      this.logger.success(`Mensagem de inicialização enviada para ${grupoRevelar}`);
+      this.logger.success(`Mensagem enviada para ${grupoRevelar}`);
       
     } catch (e) {
-      logError(this.logger, e, 'Enviar mensagem inicialização');
+      logError(this.logger, e, 'Enviar mensagem');
     }
   }
 
@@ -185,16 +203,16 @@ class Bot {
       if (isVideo) {
         await this.sock.sendMessage(this.GRUPO_REVELAR, { 
           video: buffer, 
-          caption: `🔓 Vídeo revelado!\n👤 Revelado por: ${pushname}\n📱 JID: ${sender}`
+          caption: `🔓 Vídeo revelado!\n👤 ${pushname}\n📱 ${sender}`
         });
       } else {
         await this.sock.sendMessage(this.GRUPO_REVELAR, { 
           image: buffer, 
-          caption: `🔓 Imagem revelada!\n👤 Revelado por: ${pushname}\n📱 JID: ${sender}`
+          caption: `🔓 Imagem revelada!\n👤 ${pushname}\n📱 ${sender}`
         });
       }
       
-      this.logger.revelar(`${pushname} revelou mídia no grupo ${this.GRUPO_REVELAR}`);
+      this.logger.revelar(`${pushname} revelou mídia`);
       return true;
     } catch (e) {
       logError(this.logger, e, 'Revelar');
@@ -281,36 +299,32 @@ class Bot {
 
   async handleMessages(m) {
     try {
+      if (!this.isConnected || !this.sock) return;
+
       const info = m.messages[0];
       if (!info || !info.message || info.key.remoteJid === 'status@broadcast') return;
-      
-      // Filtra mensagens antigas (mais de 30 segundos)
-      if (info.messageTimestamp) {
-        const now = Math.floor(Date.now() / 1000);
-        const msgTime = typeof info.messageTimestamp === 'string' ? parseInt(info.messageTimestamp) : info.messageTimestamp;
-        const timeDiff = now - msgTime;
-        
-        if (timeDiff > 30) {
-          return;
-        }
-      }
 
-      // ========== DECLARA VARIÁVEIS ==========
       const from = info.key.remoteJid;
       const isGroup = isGroupChat(from);
+      
+      // ⬇️ FILTRO: APENAS GRUPOS PERMITIDOS ⬇️
+      if (!isGroup) return;
+      
+      const fromNumber = from.split('@')[0];
+      const isPermitido = this.GRUPOS_PERMITIDOS.some(grupo => {
+        const grupoNumber = grupo.split('@')[0];
+        return grupoNumber === fromNumber;
+      });
+      
+      if (!isPermitido) return;
+
       const sender = getSender(info, isGroup);
       const pushname = info.pushName || 'Sem nome';
       const type = Object.keys(info.message)[0];
       
-      if (!from || !sender) {
-        this.logger.warning('Mensagem sem JID válido, ignorando...');
-        return;
-      }
+      if (!from || !sender) return;
       
-      // ⬇️ IGNORA MENSAGENS DE SISTEMA ⬇️
-      if (type === 'protocolMessage' || type === 'senderKeyDistributionMessage') {
-        return;
-      }
+      if (type === 'protocolMessage' || type === 'senderKeyDistributionMessage') return;
       
       let body = '';
       if (type === 'conversation') body = info.message.conversation;
@@ -320,44 +334,6 @@ class Bot {
       else if (type === 'audioMessage') body = info.message.audioMessage.caption || '';
 
       const reply = (text) => this.sock.sendMessage(from, { text }, { quoted: info });
-
-      // ========== FILTRO: APENAS GRUPOS PERMITIDOS E DONO ==========
-      const isDono = sender === this.DONO_LID;
-      const isGrupoPermitido = this.GRUPOS_PERMITIDOS.some(grupo => {
-        const grupoNumber = grupo.split('@')[0];
-        const fromNumber = from.split('@')[0];
-        return grupoNumber === fromNumber;
-      });
-
-      // Se não for dono E não estiver em grupo permitido, ignora
-      if (!isDono && !isGrupoPermitido) {
-        // Mostra no console que foi ignorado
-        const agora = moment().tz(this.settings.timezone);
-        const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
-        
-        // Verifica se é um comando para mostrar no console
-        const isCmd = this.settings.prefix.some(p => body.startsWith(p));
-        if (isCmd) {
-          const cmdName = getCommandName(body, this.settings.prefix);
-          console.log(
-            chalk.gray('┌─────────────────────────────────────────────────'),
-            '\n' + chalk.gray('│ ⏭️ MENSAGEM IGNORADA'),
-            '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
-            '\n' + chalk.cyan('│ 🆔 LID: ') + chalk.gray(sender),
-            '\n' + chalk.cyan('│ ⚡ Comando: ') + chalk.gray(cmdName || 'Desconhecido'),
-            '\n' + chalk.cyan('│ 📍 Local: ') + (isGroup ? chalk.yellow('Grupo não permitido') : chalk.magenta('Privado (não é dono)')),
-            '\n' + chalk.cyan('│ 📅 Data/Hora: ') + chalk.gray(dataHora),
-            '\n' + chalk.cyan('│ 📝 Motivo: ') + chalk.yellow('Apenas grupos permitidos e dono'),
-            '\n' + chalk.gray('└─────────────────────────────────────────────────')
-          );
-        }
-        return;
-      }
-
-      // ========== LOG DE MENSAGEM PV (apenas se for dono) ==========
-      if (!isGroup && isDono && body) {
-        logMensagemPV(this.logger, this.settings.timezone, pushname, sender, body, isGroup);
-      }
 
       // ========== PROCESSAMENTO DE RESPOSTAS INTERATIVAS DE GASTOS ==========
       if (gastos.isEmConversaGasto(sender)) {
@@ -388,7 +364,7 @@ class Bot {
               console.log(
                 chalk.gray('┌───── ') + chalk.white(pushname) + chalk.gray(` [${sender}]`) +
                 chalk.gray(` ${isGroup ? '👥' : '👤'}`) + chalk.gray(' ─────'),
-                '\n' + chalk.gray('│ ') + chalk.hex('#FF6BFF')('👀 REVELADO NO GRUPO'),
+                '\n' + chalk.gray('│ ') + chalk.hex('#FF6BFF')('👀 REVELADO'),
                 '\n' + chalk.gray(`│ 📌 ${this.GRUPO_REVELAR}`),
                 '\n' + chalk.gray('└─────────────────────────────')
               );
@@ -404,40 +380,35 @@ class Bot {
 
       if (!commandName) return;
 
-      // Mostra comandos no console (apenas comandos permitidos)
+      // ⬇️ MOSTRA APENAS COMANDOS NO CONSOLE ⬇️
       const agora = moment().tz(this.settings.timezone);
       const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
       
       console.log(
         chalk.gray('┌─────────────────────────────────────────────────'),
-        '\n' + chalk.green('│ ✅ COMANDO PERMITIDO'),
-        '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
-        '\n' + chalk.cyan('│ 🆔 LID: ') + chalk.gray(sender || 'Desconhecido'),
-        '\n' + chalk.cyan('│ ⚡ Comando: ') + chalk.green(commandName) + chalk.gray(` ${args.join(' ')}`),
-        '\n' + chalk.cyan('│ 📍 Local: ') + (isGroup ? chalk.yellow('Grupo Permitido') : chalk.magenta('Dono (PV)')),
-        '\n' + chalk.cyan('│ 📅 Data/Hora: ') + chalk.gray(dataHora),
+        '\n' + chalk.magenta('│ ⚡ COMANDO'),
+        '\n' + chalk.cyan('│ 👤 ') + chalk.white(pushname),
+        '\n' + chalk.cyan('│ 🆔 ') + chalk.gray(sender || 'Desconhecido'),
+        '\n' + chalk.cyan('│ 📝 ') + chalk.magenta(commandName) + chalk.gray(` ${args.join(' ')}`),
+        '\n' + chalk.cyan('│ 📅 ') + chalk.gray(dataHora),
         '\n' + chalk.gray('└─────────────────────────────────────────────────')
       );
-      this.logger.command(`${pushname} (${sender || 'Desconhecido'}) → ${commandName}`);
+      this.logger.command(`${pushname} → ${commandName}`);
 
       // ========== EXECUTA COMANDO ==========
       const command = this.commandHandler.getCommand(commandName);
 
       if (command) {
-        // Verifica se o comando é apenas para dono
         const permission = hasPermission(
           sender, 
           command, 
-          this.DONO_LID, 
+          this.settings.owner, 
           this.settings.admins || [],
           pushname,
           this.settings.timezone
         );
         
-        if (!permission.allowed) {
-          // Já mostra no console dentro do hasPermission
-          return;
-        }
+        if (!permission.allowed) return;
 
         try {
           const result = await command.execute(this.sock, {
@@ -455,11 +426,11 @@ class Bot {
           });
           
           if (result && result.success) {
-            this.logger.info(`Comando ${commandName} executado por ${pushname}`);
+            this.logger.info(`✅ ${commandName} executado`);
           }
         } catch (error) {
           logError(this.logger, error, `Comando ${commandName}`);
-          reply('❌ Erro ao executar comando: ' + error.message);
+          reply('❌ Erro: ' + error.message);
         }
       }
     } catch (e) {

@@ -1,5 +1,6 @@
 /**
- * Middleware de autenticação
+ * Middleware de autenticação - MODO LIVRE
+ * Permite todos usarem comandos, exceto os marcados como ownerOnly
  */
 
 const chalk = require('chalk');
@@ -18,7 +19,7 @@ function hasPermission(sender, command, owner, admins = [], pushname = 'Desconhe
   const isOwnerUser = isOwner(sender, owner);
   const isAdminUser = isAdmin(sender, admins);
   
-  // Verifica se o comando é apenas para dono
+  // 🔒 APENAS COMANDOS MARCADOS COMO ownerOnly SÃO RESTRITOS
   if (command.ownerOnly && !isOwnerUser) {
     const agora = moment().tz(timezone);
     const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
@@ -41,7 +42,7 @@ function hasPermission(sender, command, owner, admins = [], pushname = 'Desconhe
     };
   }
   
-  // Verifica se o comando é apenas para admin
+  // 🔒 APENAS COMANDOS MARCADOS COMO adminOnly SÃO RESTRITOS
   if (command.adminOnly && !isOwnerUser && !isAdminUser) {
     const agora = moment().tz(timezone);
     const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
@@ -64,6 +65,7 @@ function hasPermission(sender, command, owner, admins = [], pushname = 'Desconhe
     };
   }
   
+  // 🔓 TODOS OS OUTROS COMANDOS SÃO PERMITIDOS
   return { allowed: true };
 }
 
