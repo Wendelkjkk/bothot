@@ -17,7 +17,7 @@ const qrcode = require('qrcode-terminal');
 const ffmpeg = require('fluent-ffmpeg');
 
 const Logger = require('./utils/logger');
-const { logError, logMensagemPV, isOwner, isGroupChat, getSender, getCommandName, getArgs } = require('./utils/helpers');
+const { logError, logMensagemPV, isGroupChat, getSender, getCommandName, getArgs } = require('./utils/helpers');
 const CommandHandler = require('./handlers/commands');
 const { hasPermission } = require('./middlewares/auth');
 
@@ -41,6 +41,36 @@ class Bot {
       '120363411284666387@g.us',
       '120363429725112824@g.us'
     ];
+    
+    // ⬇️ SEU LID (DONO) ⬇️
+    this.DONO_LID = '128862356770988@lid';
+  }
+
+  // ⬇️ FUNÇÃO PARA NORMALIZAR JID ⬇️
+  normalizarJID(jid) {
+    if (!jid) return '';
+    return jid.split('@')[0];
+  }
+
+  // ⬇️ FUNÇÃO PARA MOSTRAR LOG DE MENSAGEM PV ⬇️
+  logMensagemPV(pushname, sender, body, isGroup, from) {
+    if (isGroup) return;
+    
+    const agora = moment().tz(this.settings.timezone);
+    const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
+    const preview = body.length > 50 ? body.substring(0, 50) + '...' : body;
+    
+    console.log(
+      chalk.gray('┌─────────────────────────────────────────────────'),
+      '\n' + chalk.hex('#00CED1')('│ 💬 MENSAGEM PRIVADA'),
+      '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
+      '\n' + chalk.cyan('│ 🆔 JID: ') + chalk.gray(sender),
+      '\n' + chalk.cyan('│ 📝 Mensagem: ') + chalk.white(preview),
+      '\n' + chalk.cyan('│ 📅 Data/Hora: ') + chalk.gray(dataHora),
+      '\n' + chalk.gray('└─────────────────────────────────────────────────')
+    );
+    
+    this.logger.pv(`${pushname} (${sender}) enviou: ${preview}`);
   }
 
   async start() {
@@ -129,6 +159,7 @@ class Bot {
       cfonts.say(this.settings.botName, { font: 'block', align: 'center', gradient: ['green', 'blue'] });
       console.log(chalk.greenBright('\n✅ Bot conectado!'));
       console.log(chalk.cyan('Prefixos: ') + chalk.white(this.settings.prefix.join(' ')));
+      console.log(chalk.gray(`📌 Seu LID: ${this.DONO_LID}`));
       console.log(chalk.gray(`📌 Grupos permitidos:`));
       this.GRUPOS_PERMITIDOS.forEach(grupo => {
         console.log(chalk.gray(`   📌 ${grupo}`));
@@ -174,24 +205,6 @@ class Bot {
     } catch (e) {
       logError(this.logger, e, 'Enviar mensagem');
     }
-  }
-
-  // ⬇️ NOVA FUNÇÃO: MOSTRAR LID NO CONSOLE ⬇️
-  mostrarLIDNoConsole(sender, pushname, isGroup, from) {
-    const agora = moment().tz(this.settings.timezone);
-    const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
-    
-    console.log(
-      chalk.gray('┌─────────────────────────────────────────────────'),
-      '\n' + chalk.hex('#FF6BFF')('│ 🆔 LID DETECTADO'),
-      '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
-      '\n' + chalk.cyan('│ 🆔 LID: ') + chalk.gray(sender),
-      '\n' + chalk.cyan('│ 📍 Local: ') + (isGroup ? chalk.yellow(from) : chalk.magenta('PV')),
-      '\n' + chalk.cyan('│ 📅 Data/Hora: ') + chalk.gray(dataHora),
-      '\n' + chalk.gray('└─────────────────────────────────────────────────')
-    );
-    
-    this.logger.info(`LID de ${pushname}: ${sender}`);
   }
 
   async revelarMidia(info, from, sender, pushname) {
@@ -324,18 +337,6 @@ class Bot {
 
       const from = info.key.remoteJid;
       const isGroup = isGroupChat(from);
-      
-      // ⬇️ FILTRO: APENAS GRUPOS PERMITIDOS ⬇️
-      if (!isGroup) return;
-      
-      const fromNumber = from.split('@')[0];
-      const isPermitido = this.GRUPOS_PERMITIDOS.some(grupo => {
-        const grupoNumber = grupo.split('@')[0];
-        return grupoNumber === fromNumber;
-      });
-      
-      if (!isPermitido) return;
-
       const sender = getSender(info, isGroup);
       const pushname = info.pushName || 'Sem nome';
       const type = Object.keys(info.message)[0];
@@ -353,18 +354,35 @@ class Bot {
 
       const reply = (text) => this.sock.sendMessage(from, { text }, { quoted: info });
 
-      // ⬇️ NOVA DETECÇÃO: EMOJI PARA MOSTRAR LID ⬇️
-      if ((type === 'conversation' || type === 'extendedTextMessage') && body) {
-        const emojisLID = ['🔍', '🆔', '📍', '🔎'];
-        const contemEmojiLID = emojisLID.some(emoji => body.includes(emoji));
-        
-        if (contemEmojiLID) {
-          // Mostra o LID no console
-          this.mostrarLIDNoConsole(sender, pushname, isGroup, from);
-          
-          // Envia uma confirmação no chat
-          await reply(`🆔 LID enviado para o console!`);
-          this.logger.info(`LID de ${pushname} mostrado no console`);
+      // ⬇️ MOSTRA TODAS AS MENSAGENS PV NO CONSOLE ⬇️
+      if (!isGroup && body) {
+        this.logMensagemPV(pushname, sender, body, isGroup, from);
+      }
+
+      // ⬇️ SÓ VERIFICA SE É COMANDO SE COMEÇAR COM PREFIXO ⬇️
+      const isCmd = this.settings.prefix.some(p => body.startsWith(p));
+      
+      // ⬇️ SE NÃO FOR COMANDO, NÃO FAZ NADA ⬇️
+      if (!isCmd) return;
+
+      // ⬇️ VERIFICA SE É O DONO (COMPARAÇÃO NORMALIZADA) ⬇️
+      const isDono = this.normalizarJID(sender) === this.normalizarJID(this.DONO_LID);
+
+      // ⬇️ FILTRO: GRUPOS PERMITIDOS OU PV (APENAS DONO) ⬇️
+      if (isGroup) {
+        const fromNumber = from.split('@')[0];
+        const isPermitido = this.GRUPOS_PERMITIDOS.some(grupo => {
+          const grupoNumber = grupo.split('@')[0];
+          return grupoNumber === fromNumber;
+        });
+        if (!isPermitido) {
+          return;
+        }
+      } else {
+        // ⬇️ PV: APENAS O DONO PODE USAR COMANDOS ⬇️
+        if (!isDono) {
+          // Mostra no console que foi recusado (já aparece no log de mensagem)
+          // NÃO ENVIA NADA NO CHAT
           return;
         }
       }
@@ -388,7 +406,7 @@ class Bot {
 
       // ========== DETECÇÃO DE EMOJI PARA REVELAR ==========
       if ((type === 'extendedTextMessage' || type === 'conversation') && body) {
-        const revelarEmojis = ['👀', '🙈', '🙉', '🙊', '🔍', '👁️'];
+        const revelarEmojis = ['👀', '🙈', '🙉', '🙊', '👁️'];
         if (revelarEmojis.some(emoji => body.includes(emoji))) {
           const temQuoted = info.message.extendedTextMessage?.contextInfo?.quotedMessage || 
                            info.message.extendedTextMessage?.contextInfo?.quotedMessageId;
@@ -414,16 +432,17 @@ class Bot {
 
       if (!commandName) return;
 
-      // ⬇️ MOSTRA APENAS COMANDOS NO CONSOLE ⬇️
+      // ⬇️ MOSTRA APENAS COMANDOS PERMITIDOS NO CONSOLE ⬇️
       const agora = moment().tz(this.settings.timezone);
       const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
       
       console.log(
         chalk.gray('┌─────────────────────────────────────────────────'),
-        '\n' + chalk.magenta('│ ⚡ COMANDO'),
+        '\n' + chalk.green('│ ✅ COMANDO PERMITIDO'),
         '\n' + chalk.cyan('│ 👤 ') + chalk.white(pushname),
         '\n' + chalk.cyan('│ 🆔 ') + chalk.gray(sender || 'Desconhecido'),
         '\n' + chalk.cyan('│ 📝 ') + chalk.magenta(commandName) + chalk.gray(` ${args.join(' ')}`),
+        '\n' + chalk.cyan('│ 📍 ') + (isGroup ? chalk.yellow('Grupo') : chalk.magenta('PV (Dono)')),
         '\n' + chalk.cyan('│ 📅 ') + chalk.gray(dataHora),
         '\n' + chalk.gray('└─────────────────────────────────────────────────')
       );
