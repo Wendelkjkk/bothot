@@ -21,8 +21,9 @@ const { logError, logMensagemPV, isGroupChat, getSender, getCommandName, getArgs
 const CommandHandler = require('./handlers/commands');
 const { hasPermission } = require('./middlewares/auth');
 
-// Importa sistema de gastos
+// Importa sistemas
 const gastos = require('../database/gastos.js');
+const lembretes = require('../database/lembretes.js');
 const { getFileBuffer } = require('../utils/utils');
 
 class Bot {
@@ -35,24 +36,21 @@ class Bot {
     this.isConnected = false;
     this.syncComplete = false;
     this.mensagemInicializacaoEnviada = false;
+    this.tentativasReconexao = 0;
     
-    // ⬇️ SEUS GRUPOS PERMITIDOS ⬇️
     this.GRUPOS_PERMITIDOS = [
       '120363411284666387@g.us',
       '120363429725112824@g.us'
     ];
     
-    // ⬇️ SEU LID (DONO) ⬇️
     this.DONO_LID = '128862356770988@lid';
   }
 
-  // ⬇️ FUNÇÃO PARA NORMALIZAR JID ⬇️
   normalizarJID(jid) {
     if (!jid) return '';
     return jid.split('@')[0];
   }
 
-  // ⬇️ FUNÇÃO PARA MOSTRAR LOG DE MENSAGEM PV ⬇️
   logMensagemPV(pushname, sender, body, isGroup, from) {
     if (isGroup) return;
     
@@ -80,6 +78,7 @@ class Bot {
     this.logger.info(`Comandos carregados: ${this.commandHandler.getAllCommands().length}`);
     
     gastos.initGastos();
+    lembretes.initLembretes();
     
     await this.connect();
   }
@@ -99,26 +98,35 @@ class Bot {
       },
       msgRetryCounterCache: new NodeCache(),
       markOnlineOnConnect: true,
-      syncFullHistory: true,
-      connectTimeoutMs: 60000,
-      keepAliveIntervalMs: 10000,
-      qrMaxRetries: 5
+      syncFullHistory: false,
+      connectTimeoutMs: 30000,
+      keepAliveIntervalMs: 15000,
+      qrMaxRetries: 3,
+      defaultQueryTimeoutMs: 5000,
+      emitOwnEvents: false,
+      fireInitQueries: false,
+      syncStatus: false,
+      syncStatusV2: false,
+      syncContacts: false,
+      syncChats: false,
+      shouldIgnoreJid: () => false,
+      shouldIgnoreQuery: () => false,
+      patchMessageBeforeSending: (message) => message
     });
 
     this.sock.ev.on('creds.update', saveCreds);
     this.sock.ev.on('connection.update', (update) => this.handleConnection(update));
     this.sock.ev.on('messages.upsert', (m) => this.handleMessages(m));
     
-    this.sock.ev.on('messaging-history.set', (history) => {
+    setTimeout(() => {
       if (!this.syncComplete) {
         this.syncComplete = true;
-        this.logger.system('✅ Histórico carregado!');
-        
-        setTimeout(() => {
+        this.logger.system('✅ Bot pronto (timeout de segurança)');
+        if (!this.mensagemInicializacaoEnviada) {
           this.enviarMensagemInicializacao();
-        }, 2000);
+        }
       }
-    });
+    }, 8000);
   }
 
   handleConnection(update) {
@@ -139,21 +147,34 @@ class Bot {
       this.mensagemInicializacaoEnviada = false;
       
       if (shouldReconnect) {
-        this.logger.warning('Reconectando...');
+        this.tentativasReconexao++;
+        this.logger.warning(`Reconectando... (tentativa ${this.tentativasReconexao})`);
+        
+        const delay = Math.min(this.tentativasReconexao * 3000, 30000);
         setTimeout(() => {
-          this.logger.system('Tentando reconectar...');
+          this.logger.system(`Tentando reconectar... (após ${delay/1000}s)`);
           this.connect();
-        }, 5000);
+        }, delay);
       } else {
         this.logger.error('Conexão encerrada permanentemente.');
         setTimeout(() => {
+          this.logger.system('🧹 Limpando sessão corrompida...');
+          try {
+            if (fs.existsSync('./session')) {
+              fs.rmSync('./session', { recursive: true, force: true });
+              this.logger.system('✅ Sessão removida!');
+            }
+          } catch (e) {
+            this.logger.error('Erro ao limpar sessão: ' + e.message);
+          }
           process.exit(1);
         }, 3000);
       }
     } else if (connection === 'open') {
       this.isConnected = true;
-      this.syncComplete = false;
+      this.syncComplete = true;
       this.mensagemInicializacaoEnviada = false;
+      this.tentativasReconexao = 0;
       
       console.clear();
       cfonts.say(this.settings.botName, { font: 'block', align: 'center', gradient: ['green', 'blue'] });
@@ -164,16 +185,17 @@ class Bot {
       this.GRUPOS_PERMITIDOS.forEach(grupo => {
         console.log(chalk.gray(`   📌 ${grupo}`));
       });
-      console.log(chalk.gray('📥 Carregando histórico... Aguarde!\n'));
-      this.logger.success('Bot conectado! Carregando histórico...');
+      console.log(chalk.gray('📥 Bot pronto para usar!\n'));
+      this.logger.success('Bot conectado!');
       
       setTimeout(() => {
-        if (!this.syncComplete && !this.mensagemInicializacaoEnviada) {
-          this.logger.warning('⏳ Timeout: Forçando envio');
-          this.syncComplete = true;
-          this.enviarMensagemInicializacao();
-        }
-      }, 30000);
+        lembretes.iniciarVerificadorLembretes(this.sock, this.logger);
+        this.logger.system('✅ Verificador de lembretes ativado!');
+      }, 5000);
+      
+      setTimeout(() => {
+        this.enviarMensagemInicializacao();
+      }, 3000);
     }
   }
 
@@ -330,7 +352,10 @@ class Bot {
 
   async handleMessages(m) {
     try {
-      if (!this.isConnected || !this.sock) return;
+      if (!this.isConnected || !this.sock) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (!this.isConnected || !this.sock) return;
+      }
 
       const info = m.messages[0];
       if (!info || !info.message || info.key.remoteJid === 'status@broadcast') return;
@@ -354,37 +379,8 @@ class Bot {
 
       const reply = (text) => this.sock.sendMessage(from, { text }, { quoted: info });
 
-      // ⬇️ MOSTRA TODAS AS MENSAGENS PV NO CONSOLE ⬇️
       if (!isGroup && body) {
         this.logMensagemPV(pushname, sender, body, isGroup, from);
-      }
-
-      // ⬇️ SÓ VERIFICA SE É COMANDO SE COMEÇAR COM PREFIXO ⬇️
-      const isCmd = this.settings.prefix.some(p => body.startsWith(p));
-      
-      // ⬇️ SE NÃO FOR COMANDO, NÃO FAZ NADA ⬇️
-      if (!isCmd) return;
-
-      // ⬇️ VERIFICA SE É O DONO (COMPARAÇÃO NORMALIZADA) ⬇️
-      const isDono = this.normalizarJID(sender) === this.normalizarJID(this.DONO_LID);
-
-      // ⬇️ FILTRO: GRUPOS PERMITIDOS OU PV (APENAS DONO) ⬇️
-      if (isGroup) {
-        const fromNumber = from.split('@')[0];
-        const isPermitido = this.GRUPOS_PERMITIDOS.some(grupo => {
-          const grupoNumber = grupo.split('@')[0];
-          return grupoNumber === fromNumber;
-        });
-        if (!isPermitido) {
-          return;
-        }
-      } else {
-        // ⬇️ PV: APENAS O DONO PODE USAR COMANDOS ⬇️
-        if (!isDono) {
-          // Mostra no console que foi recusado (já aparece no log de mensagem)
-          // NÃO ENVIA NADA NO CHAT
-          return;
-        }
       }
 
       // ========== PROCESSAMENTO DE RESPOSTAS INTERATIVAS DE GASTOS ==========
@@ -400,6 +396,45 @@ class Bot {
         } catch (e) {
           logError(this.logger, e, 'Processar resposta gasto');
           reply('❌ Erro ao processar: ' + e.message);
+          return;
+        }
+      }
+
+      // ========== PROCESSAMENTO DE RESPOSTAS INTERATIVAS DE LEMBRETES ==========
+      if (lembretes.isEmConversaLembrete(sender)) {
+        try {
+          if (lembretes.isLimparConversa(sender)) {
+            await lembretes.processarRespostaLimpar(this.sock, from, sender, pushname, body, reply);
+            return;
+          }
+          
+          await lembretes.processarRespostaLembrete(this.sock, from, sender, pushname, body, reply);
+          return;
+        } catch (e) {
+          logError(this.logger, e, 'Processar resposta lembrete');
+          reply('❌ Erro ao processar: ' + e.message);
+          return;
+        }
+      }
+
+      // ⬇️ SÓ VERIFICA SE É COMANDO SE COMEÇAR COM PREFIXO ⬇️
+      const isCmd = this.settings.prefix.some(p => body.startsWith(p));
+      
+      if (!isCmd) return;
+
+      const isDono = this.normalizarJID(sender) === this.normalizarJID(this.DONO_LID);
+
+      if (isGroup) {
+        const fromNumber = from.split('@')[0];
+        const isPermitido = this.GRUPOS_PERMITIDOS.some(grupo => {
+          const grupoNumber = grupo.split('@')[0];
+          return grupoNumber === fromNumber;
+        });
+        if (!isPermitido) {
+          return;
+        }
+      } else {
+        if (!isDono) {
           return;
         }
       }
@@ -432,7 +467,6 @@ class Bot {
 
       if (!commandName) return;
 
-      // ⬇️ MOSTRA APENAS COMANDOS PERMITIDOS NO CONSOLE ⬇️
       const agora = moment().tz(this.settings.timezone);
       const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
       

@@ -1,0 +1,27 @@
+{
+  "lembretes": [
+    {
+      "id": 1,
+      "data": "2026-07-24",
+      "hora": "23:30",
+      "timestamp": 1784946600000,
+      "descricao": "Já terminou de fazer tudo ?",
+      "dataExibicao": "24/07/2026 23:30",
+      "status": "pendente",
+      "criado_em": "2026-07-24 18:16:11",
+      "criado_por": "128862356770988@lid"
+    },
+    {
+      "id": 2,
+      "data": "2026-07-25",
+      "hora": "15:00",
+      "timestamp": 1785002400000,
+      "descricao": "Já saiu pra o intervalo?",
+      "dataExibicao": "25/07/2026 15:00",
+      "status": "pendente",
+      "criado_em": "2026-07-24 18:17:21",
+      "criado_por": "128862356770988@lid"
+    }
+  ],
+  "ultimoId": 2
+}
