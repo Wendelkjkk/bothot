@@ -176,6 +176,24 @@ class Bot {
     }
   }
 
+  // ⬇️ NOVA FUNÇÃO: MOSTRAR LID NO CONSOLE ⬇️
+  mostrarLIDNoConsole(sender, pushname, isGroup, from) {
+    const agora = moment().tz(this.settings.timezone);
+    const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
+    
+    console.log(
+      chalk.gray('┌─────────────────────────────────────────────────'),
+      '\n' + chalk.hex('#FF6BFF')('│ 🆔 LID DETECTADO'),
+      '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
+      '\n' + chalk.cyan('│ 🆔 LID: ') + chalk.gray(sender),
+      '\n' + chalk.cyan('│ 📍 Local: ') + (isGroup ? chalk.yellow(from) : chalk.magenta('PV')),
+      '\n' + chalk.cyan('│ 📅 Data/Hora: ') + chalk.gray(dataHora),
+      '\n' + chalk.gray('└─────────────────────────────────────────────────')
+    );
+    
+    this.logger.info(`LID de ${pushname}: ${sender}`);
+  }
+
   async revelarMidia(info, from, sender, pushname) {
     try {
       const quotedMsg = info.message.extendedTextMessage?.contextInfo?.quotedMessage;
@@ -334,6 +352,22 @@ class Bot {
       else if (type === 'audioMessage') body = info.message.audioMessage.caption || '';
 
       const reply = (text) => this.sock.sendMessage(from, { text }, { quoted: info });
+
+      // ⬇️ NOVA DETECÇÃO: EMOJI PARA MOSTRAR LID ⬇️
+      if ((type === 'conversation' || type === 'extendedTextMessage') && body) {
+        const emojisLID = ['🔍', '🆔', '📍', '🔎'];
+        const contemEmojiLID = emojisLID.some(emoji => body.includes(emoji));
+        
+        if (contemEmojiLID) {
+          // Mostra o LID no console
+          this.mostrarLIDNoConsole(sender, pushname, isGroup, from);
+          
+          // Envia uma confirmação no chat
+          await reply(`🆔 LID enviado para o console!`);
+          this.logger.info(`LID de ${pushname} mostrado no console`);
+          return;
+        }
+      }
 
       // ========== PROCESSAMENTO DE RESPOSTAS INTERATIVAS DE GASTOS ==========
       if (gastos.isEmConversaGasto(sender)) {
