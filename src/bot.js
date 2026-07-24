@@ -33,11 +33,14 @@ class Bot {
     this.sock = null;
     this.GRUPO_REVELAR = '120363411284666387@g.us';
     
-    // LISTA DE GRUPOS PERMITIDOS
+    // ⬇️ SEUS GRUPOS PERMITIDOS ⬇️
     this.GRUPOS_PERMITIDOS = [
       '120363411284666387@g.us',
       '120363429725112824@g.us'
     ];
+    
+    // ⬇️ SEU LID (DONO) ⬇️
+    this.DONO_LID = '128862356770988@lid';
   }
 
   async start() {
@@ -115,6 +118,7 @@ class Bot {
       cfonts.say(this.settings.botName, { font: 'block', align: 'center', gradient: ['green', 'blue'] });
       console.log(chalk.greenBright('\n✅ Bot conectado!'));
       console.log(chalk.cyan('Prefixos: ') + chalk.white(this.settings.prefix.join(' ')));
+      console.log(chalk.gray(`📌 Seu LID: ${this.DONO_LID}`));
       console.log(chalk.gray(`📌 Grupos permitidos:`));
       this.GRUPOS_PERMITIDOS.forEach(grupo => {
         console.log(chalk.gray(`   📌 ${grupo}`));
@@ -280,33 +284,20 @@ class Bot {
       const info = m.messages[0];
       if (!info || !info.message || info.key.remoteJid === 'status@broadcast') return;
       
+      // Filtra mensagens antigas (mais de 30 segundos)
       if (info.messageTimestamp) {
         const now = Math.floor(Date.now() / 1000);
         const msgTime = typeof info.messageTimestamp === 'string' ? parseInt(info.messageTimestamp) : info.messageTimestamp;
         const timeDiff = now - msgTime;
         
-        if (timeDiff > 5) {
+        if (timeDiff > 30) {
           return;
         }
       }
 
+      // ========== DECLARA VARIÁVEIS ==========
       const from = info.key.remoteJid;
       const isGroup = isGroupChat(from);
-      
-      if (isGroup) {
-        const fromNumber = from.split('@')[0];
-        const isPermitido = this.GRUPOS_PERMITIDOS.some(grupo => {
-          const grupoNumber = grupo.split('@')[0];
-          return grupoNumber === fromNumber;
-        });
-        
-        if (!isPermitido) {
-          return;
-        }
-      } else {
-        return;
-      }
-      
       const sender = getSender(info, isGroup);
       const pushname = info.pushName || 'Sem nome';
       const type = Object.keys(info.message)[0];
@@ -316,6 +307,7 @@ class Bot {
         return;
       }
       
+      // ⬇️ IGNORA MENSAGENS DE SISTEMA ⬇️
       if (type === 'protocolMessage' || type === 'senderKeyDistributionMessage') {
         return;
       }
@@ -329,6 +321,45 @@ class Bot {
 
       const reply = (text) => this.sock.sendMessage(from, { text }, { quoted: info });
 
+      // ========== FILTRO: APENAS GRUPOS PERMITIDOS E DONO ==========
+      const isDono = sender === this.DONO_LID;
+      const isGrupoPermitido = this.GRUPOS_PERMITIDOS.some(grupo => {
+        const grupoNumber = grupo.split('@')[0];
+        const fromNumber = from.split('@')[0];
+        return grupoNumber === fromNumber;
+      });
+
+      // Se não for dono E não estiver em grupo permitido, ignora
+      if (!isDono && !isGrupoPermitido) {
+        // Mostra no console que foi ignorado
+        const agora = moment().tz(this.settings.timezone);
+        const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
+        
+        // Verifica se é um comando para mostrar no console
+        const isCmd = this.settings.prefix.some(p => body.startsWith(p));
+        if (isCmd) {
+          const cmdName = getCommandName(body, this.settings.prefix);
+          console.log(
+            chalk.gray('┌─────────────────────────────────────────────────'),
+            '\n' + chalk.gray('│ ⏭️ MENSAGEM IGNORADA'),
+            '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
+            '\n' + chalk.cyan('│ 🆔 LID: ') + chalk.gray(sender),
+            '\n' + chalk.cyan('│ ⚡ Comando: ') + chalk.gray(cmdName || 'Desconhecido'),
+            '\n' + chalk.cyan('│ 📍 Local: ') + (isGroup ? chalk.yellow('Grupo não permitido') : chalk.magenta('Privado (não é dono)')),
+            '\n' + chalk.cyan('│ 📅 Data/Hora: ') + chalk.gray(dataHora),
+            '\n' + chalk.cyan('│ 📝 Motivo: ') + chalk.yellow('Apenas grupos permitidos e dono'),
+            '\n' + chalk.gray('└─────────────────────────────────────────────────')
+          );
+        }
+        return;
+      }
+
+      // ========== LOG DE MENSAGEM PV (apenas se for dono) ==========
+      if (!isGroup && isDono && body) {
+        logMensagemPV(this.logger, this.settings.timezone, pushname, sender, body, isGroup);
+      }
+
+      // ========== PROCESSAMENTO DE RESPOSTAS INTERATIVAS DE GASTOS ==========
       if (gastos.isEmConversaGasto(sender)) {
         try {
           if (gastos.isResetConversa(sender)) {
@@ -345,6 +376,7 @@ class Bot {
         }
       }
 
+      // ========== DETECÇÃO DE EMOJI PARA REVELAR ==========
       if ((type === 'extendedTextMessage' || type === 'conversation') && body) {
         const revelarEmojis = ['👀', '🙈', '🙉', '🙊', '🔍', '👁️'];
         if (revelarEmojis.some(emoji => body.includes(emoji))) {
@@ -366,43 +398,44 @@ class Bot {
         }
       }
 
+      // ========== VERIFICA SE É COMANDO ==========
       const commandName = getCommandName(body, this.settings.prefix);
       const args = getArgs(body, this.settings.prefix);
 
       if (!commandName) return;
 
+      // Mostra comandos no console (apenas comandos permitidos)
       const agora = moment().tz(this.settings.timezone);
       const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
       
       console.log(
         chalk.gray('┌─────────────────────────────────────────────────'),
-        '\n' + chalk.magenta('│ ⚡ COMANDO EXECUTADO'),
+        '\n' + chalk.green('│ ✅ COMANDO PERMITIDO'),
         '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
-        '\n' + chalk.cyan('│ 🆔 JID: ') + chalk.gray(sender || 'Desconhecido'),
-        '\n' + chalk.cyan('│ ⚡ Comando: ') + chalk.magenta(commandName) + chalk.gray(` ${args.join(' ')}`),
-        '\n' + chalk.cyan('│ 📍 Local: ') + (isGroup ? chalk.yellow('Grupo') : chalk.magenta('Privado')),
+        '\n' + chalk.cyan('│ 🆔 LID: ') + chalk.gray(sender || 'Desconhecido'),
+        '\n' + chalk.cyan('│ ⚡ Comando: ') + chalk.green(commandName) + chalk.gray(` ${args.join(' ')}`),
+        '\n' + chalk.cyan('│ 📍 Local: ') + (isGroup ? chalk.yellow('Grupo Permitido') : chalk.magenta('Dono (PV)')),
         '\n' + chalk.cyan('│ 📅 Data/Hora: ') + chalk.gray(dataHora),
         '\n' + chalk.gray('└─────────────────────────────────────────────────')
       );
       this.logger.command(`${pushname} (${sender || 'Desconhecido'}) → ${commandName}`);
 
+      // ========== EXECUTA COMANDO ==========
       const command = this.commandHandler.getCommand(commandName);
 
       if (command) {
-        const permission = hasPermission(sender, command, this.settings.owner, this.settings.admins || []);
+        // Verifica se o comando é apenas para dono
+        const permission = hasPermission(
+          sender, 
+          command, 
+          this.DONO_LID, 
+          this.settings.admins || [],
+          pushname,
+          this.settings.timezone
+        );
+        
         if (!permission.allowed) {
-          this.logger.warning(`🚫 ${pushname} (${sender}) tentou usar "${commandName}" sem permissão`);
-          
-          console.log(
-            chalk.gray('┌─────────────────────────────────────────────────'),
-            '\n' + chalk.red('│ 🚫 PERMISSÃO NEGADA'),
-            '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
-            '\n' + chalk.cyan('│ 🆔 JID: ') + chalk.gray(sender),
-            '\n' + chalk.cyan('│ ⚡ Comando: ') + chalk.red(commandName),
-            '\n' + chalk.cyan('│ 📝 Motivo: ') + chalk.yellow('Apenas o dono pode usar comandos!'),
-            '\n' + chalk.gray('└─────────────────────────────────────────────────')
-          );
-          
+          // Já mostra no console dentro do hasPermission
           return;
         }
 
