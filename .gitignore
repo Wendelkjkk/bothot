@@ -1,0 +1,49 @@
+# Dependências
+node_modules/
+npm-debug.log
+package-lock.json
+
+# Sessão do WhatsApp
+session/
+creds.json
+
+# Logs
+logs/
+*.log
+
+# Arquivos temporários
+database/audio_temp.ogg
+temp/
+*.tmp
+
+# Backups
+backups/
+*.bak
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# .env
+.env
+.env.local
+
+# Database
+database/gastos.json
+database/*.db
+database/*.sqlite
+
+# Áudios
+database/audio/*.mp3
+database/audio/*.wav
+database/audio/*.ogg
+
+# Arquivos grandes
+*.mp4
+*.zip
+*.rar
+*.7z
