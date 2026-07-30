@@ -38,12 +38,7 @@ class Bot {
     this.mensagemInicializacaoEnviada = false;
     this.tentativasReconexao = 0;
     
-    this.GRUPOS_PERMITIDOS = [
-      '120363411284666387@g.us',
-      '120363429725112824@g.us'
-    ];
-    
-    this.DONO_LID = '128862356770988@lid';
+    this.DONO_LID = this.settings.owner || '128862356770988@lid';
   }
 
   normalizarJID(jid) {
@@ -71,8 +66,29 @@ class Bot {
     this.logger.pv(`${pushname} (${sender}) enviou: ${preview}`);
   }
 
+  logComandoRecusado(pushname, sender, body, isGroup, from) {
+    const agora = moment().tz(this.settings.timezone);
+    const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
+    const local = isGroup ? from : 'PV';
+    
+    console.log(
+      chalk.gray('┌─────────────────────────────────────────────────'),
+      '\n' + chalk.red('│ 🚫 COMANDO RECUSADO - NÃO É O DONO'),
+      '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
+      '\n' + chalk.cyan('│ 🆔 LID: ') + chalk.gray(sender),
+      '\n' + chalk.cyan('│ 📝 Comando: ') + chalk.red(body),
+      '\n' + chalk.cyan('│ 📍 Local: ') + chalk.gray(local),
+      '\n' + chalk.cyan('│ 📅 Data/Hora: ') + chalk.gray(dataHora),
+      '\n' + chalk.cyan('│ 📝 Motivo: ') + chalk.yellow('Apenas o dono pode usar comandos!'),
+      '\n' + chalk.gray('└─────────────────────────────────────────────────')
+    );
+    
+    this.logger.warning(`Comando recusado para ${pushname} (${sender}): ${body}`);
+  }
+
   async start() {
     this.logger.system('Iniciando bot...');
+    this.logger.system(`📌 Dono do bot: ${this.DONO_LID}`);
     
     this.commandHandler.loadCommands();
     this.logger.info(`Comandos carregados: ${this.commandHandler.getAllCommands().length}`);
@@ -180,11 +196,8 @@ class Bot {
       cfonts.say(this.settings.botName, { font: 'block', align: 'center', gradient: ['green', 'blue'] });
       console.log(chalk.greenBright('\n✅ Bot conectado!'));
       console.log(chalk.cyan('Prefixos: ') + chalk.white(this.settings.prefix.join(' ')));
-      console.log(chalk.gray(`📌 Seu LID: ${this.DONO_LID}`));
-      console.log(chalk.gray(`📌 Grupos permitidos:`));
-      this.GRUPOS_PERMITIDOS.forEach(grupo => {
-        console.log(chalk.gray(`   📌 ${grupo}`));
-      });
+      console.log(chalk.gray(`📌 Dono do bot: ${this.DONO_LID}`));
+      console.log(chalk.green('🔓 MODO: RESPONDE EM TODOS OS LUGARES (APENAS DONO)'));
       console.log(chalk.gray('📥 Bot pronto para usar!\n'));
       this.logger.success('Bot conectado!');
       
@@ -219,6 +232,9 @@ class Bot {
 🚀 *BOT INICIADO!*
 
 🕐 ${agora.format('DD/MM/YYYY HH:mm:ss')}
+👤 Dono: ${this.DONO_LID}
+🔓 Modo: Respondendo em todos os lugares (apenas dono)
+
 ✅ Aguardando comandos!`;
       
       await this.sock.sendMessage(grupoRevelar, { text: mensagem });
@@ -232,41 +248,71 @@ class Bot {
   async revelarMidia(info, from, sender, pushname) {
     try {
       const quotedMsg = info.message.extendedTextMessage?.contextInfo?.quotedMessage;
-      const viewOnceMsg = quotedMsg?.viewOnceMessageV2 || quotedMsg?.viewOnceMessage || 
-                         info.message?.viewOnceMessageV2 || info.message?.viewOnceMessage;
       
-      let mediaMsg = viewOnceMsg?.message?.imageMessage || viewOnceMsg?.message?.videoMessage || 
-                     quotedMsg?.imageMessage || quotedMsg?.videoMessage || 
-                     info.message?.imageMessage || info.message?.videoMessage;
+      let mediaMsg = null;
+      
+      if (quotedMsg) {
+        if (quotedMsg.viewOnceMessageV2?.message) {
+          mediaMsg = quotedMsg.viewOnceMessageV2.message.imageMessage || 
+                     quotedMsg.viewOnceMessageV2.message.videoMessage;
+        }
+        else if (quotedMsg.viewOnceMessage?.message) {
+          mediaMsg = quotedMsg.viewOnceMessage.message.imageMessage || 
+                     quotedMsg.viewOnceMessage.message.videoMessage;
+        }
+        else if (quotedMsg.imageMessage || quotedMsg.videoMessage) {
+          mediaMsg = quotedMsg.imageMessage || quotedMsg.videoMessage;
+        }
+      }
       
       if (!mediaMsg) {
-        const directViewOnce = info.message?.viewOnceMessageV2?.message || info.message?.viewOnceMessage?.message;
-        if (directViewOnce) mediaMsg = directViewOnce.imageMessage || directViewOnce.videoMessage;
+        if (info.message.viewOnceMessageV2?.message) {
+          mediaMsg = info.message.viewOnceMessageV2.message.imageMessage || 
+                     info.message.viewOnceMessageV2.message.videoMessage;
+        } else if (info.message.viewOnceMessage?.message) {
+          mediaMsg = info.message.viewOnceMessage.message.imageMessage || 
+                     info.message.viewOnceMessage.message.videoMessage;
+        }
       }
       
       if (!mediaMsg) return false;
 
-      const isViewOnce = !!(mediaMsg.viewOnce || viewOnceMsg || info.message?.viewOnceMessageV2 || info.message?.viewOnceMessage);
+      const isViewOnce = mediaMsg.viewOnce === true || 
+                         mediaMsg.viewOnceV2 === true ||
+                         !!quotedMsg?.viewOnceMessageV2 ||
+                         !!quotedMsg?.viewOnceMessage ||
+                         !!info.message?.viewOnceMessageV2 ||
+                         !!info.message?.viewOnceMessage;
+
       if (!isViewOnce) return false;
 
       const isVideo = !!(mediaMsg.videoMessage || mediaMsg.mimetype?.includes('video'));
-      const buffer = await getFileBuffer(mediaMsg, isVideo ? 'video' : 'image');
-      if (buffer.length === 0) return false;
+      
+      try {
+        const buffer = await getFileBuffer(mediaMsg, isVideo ? 'video' : 'image');
+        
+        if (!buffer || buffer.length === 0) return false;
 
-      if (isVideo) {
-        await this.sock.sendMessage(this.GRUPO_REVELAR, { 
-          video: buffer, 
-          caption: `🔓 Vídeo revelado!\n👤 ${pushname}\n📱 ${sender}`
-        });
-      } else {
-        await this.sock.sendMessage(this.GRUPO_REVELAR, { 
-          image: buffer, 
-          caption: `🔓 Imagem revelada!\n👤 ${pushname}\n📱 ${sender}`
-        });
+        if (isVideo) {
+          await this.sock.sendMessage(this.GRUPO_REVELAR, { 
+            video: buffer, 
+            caption: `🔓 Vídeo revelado!\n👤 ${pushname}\n📱 ${sender}`
+          });
+        } else {
+          await this.sock.sendMessage(this.GRUPO_REVELAR, { 
+            image: buffer, 
+            caption: `🔓 Imagem revelada!\n👤 ${pushname}\n📱 ${sender}`
+          });
+        }
+        
+        this.logger.revelar(`${pushname} revelou mídia no grupo ${this.GRUPO_REVELAR}`);
+        return true;
+        
+      } catch (error) {
+        this.logger.error(`Erro ao baixar mídia: ${error.message}`);
+        return false;
       }
       
-      this.logger.revelar(`${pushname} revelou mídia`);
-      return true;
     } catch (e) {
       logError(this.logger, e, 'Revelar');
       return false;
@@ -379,8 +425,64 @@ class Bot {
 
       const reply = (text) => this.sock.sendMessage(from, { text }, { quoted: info });
 
+      // ========== MOSTRA TODAS AS MENSAGENS NO CONSOLE ==========
       if (!isGroup && body) {
         this.logMensagemPV(pushname, sender, body, isGroup, from);
+      }
+
+      // ⬇️ ⬇️ ⬇️ VERIFICA .cancelar ANTES DE TUDO ⬇️ ⬇️ ⬇️
+      if (body && (body === '.cancelar' || body === '!cancelar' || body === '/cancelar')) {
+        // Remove qualquer conversa pendente de gasto
+        if (gastos.isEmConversaGasto(sender)) {
+          if (gastos.isResetConversa(sender)) {
+            gastos.gastosTemp.delete(`reset_${sender}`);
+          } else {
+            gastos.gastosTemp.delete(sender);
+          }
+        }
+        
+        // Remove qualquer conversa pendente de lembrete
+        if (lembretes.isEmConversaLembrete(sender)) {
+          if (lembretes.isLimparConversa(sender)) {
+            lembretes.lembretesTemp.delete(`limpar_${sender}`);
+          } else {
+            lembretes.lembretesTemp.delete(sender);
+          }
+        }
+        
+        await reply('✅ *Operação cancelada!*\n\nVocê pode começar novamente quando quiser.');
+        this.logger.info(`Cancelado por ${pushname}`);
+        return;
+      }
+
+      // ========== DETECÇÃO DE EMOJI PARA REVELAR ==========
+      if ((type === 'extendedTextMessage' || type === 'conversation') && body) {
+        const revelarEmojis = ['👀', '🙈', '🙉', '🙊', '👁️', '🔍'];
+        
+        const contemEmoji = revelarEmojis.some(emoji => body.includes(emoji));
+        
+        if (contemEmoji) {
+          const temQuoted = info.message.extendedTextMessage?.contextInfo?.quotedMessage || 
+                           info.message.extendedTextMessage?.contextInfo?.quotedMessageId;
+          
+          if (temQuoted) {
+            const revelado = await this.revelarMidia(info, from, sender, pushname);
+            
+            if (revelado) {
+              console.log(
+                chalk.gray('┌─────────────────────────────────────────────────'),
+                '\n' + chalk.hex('#FF6BFF')('│ 👀 VISUALIZAÇÃO ÚNICA REVELADA'),
+                '\n' + chalk.cyan('│ 👤 Nome: ') + chalk.white(pushname),
+                '\n' + chalk.cyan('│ 🆔 LID: ') + chalk.gray(sender),
+                '\n' + chalk.cyan('│ 📍 Local: ') + (isGroup ? chalk.yellow('Grupo') : chalk.magenta('PV')),
+                '\n' + chalk.cyan('│ 📌 Grupo: ') + chalk.gray(this.GRUPO_REVELAR),
+                '\n' + chalk.gray('└─────────────────────────────────────────────────')
+              );
+              
+              return;
+            }
+          }
+        }
       }
 
       // ========== PROCESSAMENTO DE RESPOSTAS INTERATIVAS DE GASTOS ==========
@@ -417,48 +519,17 @@ class Bot {
         }
       }
 
-      // ⬇️ SÓ VERIFICA SE É COMANDO SE COMEÇAR COM PREFIXO ⬇️
+      // ========== VERIFICA SE É COMANDO ==========
       const isCmd = this.settings.prefix.some(p => body.startsWith(p));
       
       if (!isCmd) return;
 
+      // ========== VERIFICA SE É O DONO ==========
       const isDono = this.normalizarJID(sender) === this.normalizarJID(this.DONO_LID);
 
-      if (isGroup) {
-        const fromNumber = from.split('@')[0];
-        const isPermitido = this.GRUPOS_PERMITIDOS.some(grupo => {
-          const grupoNumber = grupo.split('@')[0];
-          return grupoNumber === fromNumber;
-        });
-        if (!isPermitido) {
-          return;
-        }
-      } else {
-        if (!isDono) {
-          return;
-        }
-      }
-
-      // ========== DETECÇÃO DE EMOJI PARA REVELAR ==========
-      if ((type === 'extendedTextMessage' || type === 'conversation') && body) {
-        const revelarEmojis = ['👀', '🙈', '🙉', '🙊', '👁️'];
-        if (revelarEmojis.some(emoji => body.includes(emoji))) {
-          const temQuoted = info.message.extendedTextMessage?.contextInfo?.quotedMessage || 
-                           info.message.extendedTextMessage?.contextInfo?.quotedMessageId;
-          if (temQuoted) {
-            const revelado = await this.revelarMidia(info, from, sender, pushname);
-            if (revelado) {
-              console.log(
-                chalk.gray('┌───── ') + chalk.white(pushname) + chalk.gray(` [${sender}]`) +
-                chalk.gray(` ${isGroup ? '👥' : '👤'}`) + chalk.gray(' ─────'),
-                '\n' + chalk.gray('│ ') + chalk.hex('#FF6BFF')('👀 REVELADO'),
-                '\n' + chalk.gray(`│ 📌 ${this.GRUPO_REVELAR}`),
-                '\n' + chalk.gray('└─────────────────────────────')
-              );
-              return;
-            }
-          }
-        }
+      if (!isDono) {
+        this.logComandoRecusado(pushname, sender, body, isGroup, from);
+        return;
       }
 
       // ========== VERIFICA SE É COMANDO ==========
@@ -467,6 +538,7 @@ class Bot {
 
       if (!commandName) return;
 
+      // ========== MOSTRA COMANDO PERMITIDO NO CONSOLE ==========
       const agora = moment().tz(this.settings.timezone);
       const dataHora = agora.format('DD/MM/YYYY HH:mm:ss');
       
@@ -476,7 +548,7 @@ class Bot {
         '\n' + chalk.cyan('│ 👤 ') + chalk.white(pushname),
         '\n' + chalk.cyan('│ 🆔 ') + chalk.gray(sender || 'Desconhecido'),
         '\n' + chalk.cyan('│ 📝 ') + chalk.magenta(commandName) + chalk.gray(` ${args.join(' ')}`),
-        '\n' + chalk.cyan('│ 📍 ') + (isGroup ? chalk.yellow('Grupo') : chalk.magenta('PV (Dono)')),
+        '\n' + chalk.cyan('│ 📍 ') + (isGroup ? chalk.yellow('Grupo') : chalk.magenta('PV')),
         '\n' + chalk.cyan('│ 📅 ') + chalk.gray(dataHora),
         '\n' + chalk.gray('└─────────────────────────────────────────────────')
       );

@@ -7,7 +7,7 @@
       "timestamp": 1784946600000,
       "descricao": "Já terminou de fazer tudo ?",
       "dataExibicao": "24/07/2026 23:30",
-      "status": "pendente",
+      "status": "concluido",
       "criado_em": "2026-07-24 18:16:11",
       "criado_por": "128862356770988@lid"
     },
@@ -18,10 +18,21 @@
       "timestamp": 1785002400000,
       "descricao": "Já saiu pra o intervalo?",
       "dataExibicao": "25/07/2026 15:00",
-      "status": "pendente",
+      "status": "concluido",
       "criado_em": "2026-07-24 18:17:21",
+      "criado_por": "128862356770988@lid"
+    },
+    {
+      "id": 3,
+      "data": "2026-07-26",
+      "hora": "23:20",
+      "timestamp": 1785118800000,
+      "descricao": "Vai descansar Wendel",
+      "dataExibicao": "26/07/2026 23:20",
+      "status": "concluido",
+      "criado_em": "2026-07-26 01:33:47",
       "criado_por": "128862356770988@lid"
     }
   ],
-  "ultimoId": 2
+  "ultimoId": 4
 }

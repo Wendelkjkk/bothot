@@ -40,9 +40,14 @@ async function iniciarGasto(sock, from, sender, pushname, reply) {
       return false;
     }
 
-    // Inicia a conversa
-    gastosTemp.set(sender, { etapa: 'categoria', timestamp: Date.now() });
-    await reply('💰 *Com o que você gastou?*\n\n📌 Digite a categoria (ex: Uber, Alimentação, Filha)');
+    // Inicia a conversa com timestamp
+    gastosTemp.set(sender, { 
+      etapa: 'categoria', 
+      timestamp: Date.now(),
+      timeout: 60000 // 1 minuto
+    });
+    
+    await reply('💰 *Com o que você gastou?*\n\n📌 Digite a categoria (ex: Uber, Alimentação, Filha)\n\n⏱️ *Você tem 1 minuto para responder!*');
     
     return true;
   } catch (e) {
@@ -58,20 +63,31 @@ async function processarRespostaGasto(sock, from, sender, pushname, body, reply)
     
     if (!userData) return false;
 
+    // ⬇️ VERIFICA TIMEOUT ⬇️
+    const agora = Date.now();
+    const tempoDecorrido = agora - userData.timestamp;
+    
+    if (tempoDecorrido > userData.timeout) {
+      gastosTemp.delete(sender);
+      await reply('⏰ *Tempo esgotado!*\n\n❌ Operação de gasto cancelada automaticamente.\n💡 Use *.gasto* para tentar novamente.');
+      return false;
+    }
+
     // Etapa 1: Receber a categoria
     if (userData.etapa === 'categoria') {
       const categoria = body.trim();
       
       if (categoria.length < 2) {
-        await reply('❌ Digite uma categoria válida (ex: Uber, Alimentação, Filha)');
+        await reply('❌ Digite uma categoria válida (ex: Uber, Alimentação, Filha)\n\n⏱️ *Você tem 1 minuto para responder!*');
         return true;
       }
       
       userData.categoria = categoria;
       userData.etapa = 'valor';
+      userData.timestamp = Date.now(); // Reseta o timer
       gastosTemp.set(sender, userData);
       
-      await reply(`💰 *Categoria: ${categoria}*\n\n💸 Quanto foi gasto?\n📌 Digite o valor (ex: 10,90 ou 10.90)`);
+      await reply(`💰 *Categoria: ${categoria}*\n\n💸 Quanto foi gasto?\n📌 Digite o valor (ex: 10,90 ou 10.90)\n\n⏱️ *Você tem 1 minuto para responder!*`);
       return true;
     }
     
@@ -81,15 +97,15 @@ async function processarRespostaGasto(sock, from, sender, pushname, body, reply)
       const valor = parseFloat(valorStr);
       
       if (isNaN(valor) || valor <= 0) {
-        await reply('❌ Valor inválido! Digite um número positivo (ex: 10,90)');
+        await reply('❌ Valor inválido! Digite um número positivo (ex: 10,90)\n\n⏱️ *Você tem 1 minuto para responder!*');
         return true;
       }
       
-      // Cria o gasto (sem hora)
-      const agora = moment().tz('America/Sao_Paulo');
+      // Cria o gasto
+      const agoraDate = moment().tz('America/Sao_Paulo');
       const gasto = {
         id: Date.now(),
-        data: agora.format('YYYY-MM-DD'),
+        data: agoraDate.format('YYYY-MM-DD'),
         categoria: userData.categoria,
         valor: valor
       };
@@ -111,7 +127,7 @@ async function processarRespostaGasto(sock, from, sender, pushname, body, reply)
         .reduce((sum, g) => sum + g.valor, 0);
       
       // Calcula gastos do dia
-      const hoje = agora.format('YYYY-MM-DD');
+      const hoje = agoraDate.format('YYYY-MM-DD');
       const gastosHoje = dados.gastos.filter(g => g.data === hoje);
       const totalHoje = gastosHoje.reduce((sum, g) => sum + g.valor, 0);
       
@@ -122,7 +138,7 @@ async function processarRespostaGasto(sock, from, sender, pushname, body, reply)
 
 📌 Categoria: ${userData.categoria}
 💸 Valor: R$ ${valor.toFixed(2)}
-📅 Data: ${agora.format('DD/MM/YYYY')}
+📅 Data: ${agoraDate.format('DD/MM/YYYY')}
 
 📊 *Atualizações:*
 • ${userData.categoria}: R$ ${totalCategoria.toFixed(2)}
@@ -228,15 +244,22 @@ async function iniciarReset(sock, from, sender, pushname, reply) {
       return false;
     }
 
-    // Solicita confirmação
-    gastosTemp.set(`reset_${sender}`, { etapa: 'confirmar', timestamp: Date.now() });
+    // Solicita confirmação com timeout
+    gastosTemp.set(`reset_${sender}`, { 
+      etapa: 'confirmar', 
+      timestamp: Date.now(),
+      timeout: 60000
+    });
+    
     await reply(`⚠️ *ATENÇÃO: RESETAR TODOS OS GASTOS!*
 
 📊 Você tem ${dados.gastos.length} gastos
 💰 Total: R$ ${total.toFixed(2)}
 
 ❗ *DIGITE "CONFIRMAR" PARA RESETAR TUDO*
-🔴 *DIGITE "CANCELAR" PARA CANCELAR*`);
+🔴 *DIGITE "CANCELAR" PARA CANCELAR*
+
+⏱️ *Você tem 1 minuto para responder!*`);
     
     return true;
   } catch (e) {
@@ -247,6 +270,20 @@ async function iniciarReset(sock, from, sender, pushname, reply) {
 
 async function processarRespostaReset(sock, from, sender, pushname, body, reply) {
   try {
+    const userData = gastosTemp.get(`reset_${sender}`);
+    
+    if (!userData) return false;
+    
+    // ⬇️ VERIFICA TIMEOUT ⬇️
+    const agora = Date.now();
+    const tempoDecorrido = agora - userData.timestamp;
+    
+    if (tempoDecorrido > userData.timeout) {
+      gastosTemp.delete(`reset_${sender}`);
+      await reply('⏰ *Tempo esgotado!*\n\n❌ Operação de reset cancelada automaticamente.');
+      return false;
+    }
+    
     const resposta = body.trim().toUpperCase();
     
     if (resposta === 'CONFIRMAR') {
@@ -272,7 +309,7 @@ async function processarRespostaReset(sock, from, sender, pushname, body, reply)
       return true;
       
     } else {
-      await reply('❌ Resposta inválida! Digite "CONFIRMAR" ou "CANCELAR"');
+      await reply('❌ Resposta inválida! Digite "CONFIRMAR" ou "CANCELAR"\n\n⏱️ *Você tem 1 minuto para responder!*');
       return false;
     }
   } catch (e) {
@@ -304,11 +341,12 @@ function getResetData(sender) {
 setInterval(() => {
   const now = Date.now();
   for (const [key, value] of gastosTemp) {
-    if (value && value.timestamp && (now - value.timestamp > 300000)) { // 5 minutos
+    if (value && value.timestamp && (now - value.timestamp > 60000)) { // 1 minuto
       gastosTemp.delete(key);
+      console.log(`🧹 Limpeza automática: removido gastosTemp[${key}] (timeout)`);
     }
   }
-}, 60000);
+}, 10000); // Verifica a cada 10 segundos
 
 // ============== EXPORTA FUNÇÕES ==============
 
